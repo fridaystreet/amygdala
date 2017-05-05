@@ -351,7 +351,7 @@ Amygdala.prototype._reduceRelated = function(type, object) {
       // check if attr value is an array,
       // if it's not empty, and if the content is an object and not a string
       if (_.isArray(related) && related.length) {
-        related = _.map(related, (function(item){
+        object[relatedAttr] = _.map(related, (function(item){
           if (_.isObject(item)) {
             return item[this._config.idAttribute];
           }
