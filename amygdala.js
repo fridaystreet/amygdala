@@ -25,7 +25,7 @@ var Amygdala = function(options) {
   if (this._config.localStorage) {
     _.each(this._schema, function(value, key) {
       // check each schema entry for localStorage data
-      // TODO: filter out apiUrl and idAttribute 
+      // TODO: filter out apiUrl and idAttribute
       var storageCache = window.localStorage.getItem('amy-' + key);
       if (storageCache) {
         this._set(key, JSON.parse(storageCache), {'silent': true} );
@@ -123,7 +123,7 @@ Amygdala.prototype._getURI = function(type, params) {
   }
   url = this._config.apiUrl + this._schema[type].url;
 
-  // if the `idAttribute` specified by the config 
+  // if the `idAttribute` specified by the config
   // exists as a key in `params` append it's value to the url,
   // and remove it from `params` so it's not sent in the query string.
   if (params && this._config.idAttribute in params) {
@@ -146,7 +146,7 @@ Amygdala.prototype._emitChange = function(type) {
       // TODO: compare the previous object and trigger change events
     }.bind(this), type), 150);
   }
-  
+
   this._changeEvents[type]();
 }
 
@@ -190,16 +190,16 @@ Amygdala.prototype._set = function(type, response, options) {
 
     //if the response length is 0 reset the store
   if (!response.length) {
-    //if the previous store is not empty then empty it and fire a change event 
-    if (_.size(store) === 0) {
+    //if the previous store is not empty then empty it and fire a change event
+    if (_.size(store) !== 0) {
       this._store[type] = {};
       if (!options || options.silent !== true) {
         this._emitChange(type);
       }
     }
     return;
-  }  
-  
+  }
+
   _.each(response, function(obj) {
     // store the object under this._store['type']['id']
     store[obj[this._config.idAttribute]] = obj;
@@ -248,28 +248,61 @@ Amygdala.prototype._set = function(type, response, options) {
     // set up a related method to fetch other related objects
     // as defined in the schema for the store.
     obj.getRelated = _.partial(function(schema, obj, attributeName) {
-      if (schema.oneToMany && attributeName in schema.oneToMany) {
-        //
-        // if oneToMany relation
-        //
-        // loop through each id in the obj
-        // and return the full related object list as the response
-        return obj[attributeName].map(function(value) {
-          // find in related `table` by id
-          return this.find(schema.oneToMany[attributeName], value);
-        }.bind(this)).filter(function(value) {
-          // filter out undefined/null values
-          return !!value;
+
+      obj = _.cloneDeep(obj);
+      var promises = [];
+
+      _.each(_.merge(schema.oneToMany, schema.foreignKey), (function(serverAttr, localAttr){
+        if (!attributeName || (attributeName && attributeName === localAttr)) {
+
+          if (!obj[localAttr]) {
+            return;
+          }
+          if (!_.isArray(obj[localAttr])) {
+            obj[localAttr] = [obj[localAttr]];
+          }
+
+          _.map(obj[localAttr], (function(value) {
+            // find in related `table` by id
+
+            var id = value[this._config.idAttribute] || value;
+
+            var promise = Q(this.find(serverAttr, id))
+            .then((function(data){
+              if (!_.isObject(data)) {
+                return this.get(serverAttr, {[this._config.idAttribute]: id})
+                .then(function(result) {
+                  return {
+                    attr: localAttr,
+                    value: result
+                  };
+                });
+              }
+              return {
+                attr: localAttr,
+                value: data
+              };
+            }).bind(this));
+
+            obj[localAttr] = [];
+            promises.push(promise);
+          }.bind(this)));
+        }
+      }).bind(this));
+
+      return Q.all(promises)
+      .then(function(responses){
+        _.each(responses, function(item) {
+
+          if (item.attr in schema.oneToMany) {
+            obj[item.attr].push(item.value);
+            return;
+          }
+          obj[item.attr] = item.value
         });
-      } else if (schema.foreignKey && attributeName in schema.foreignKey) {
-        //
-        // else, if foreignKey relation
-        //
-        //
-        // find in related `table` by id
-        return this.find(schema.foreignKey[attributeName], obj[attributeName]);
-      }
-      return null;
+        return obj;
+      });
+
     }.bind(this), schema, obj);
 
     // emit change events
@@ -308,6 +341,52 @@ Amygdala.prototype._validateURI = function(url) {
 
   return url;
 }
+
+Amygdala.prototype._reduceRelated = function(type, object) {
+
+  _.each(this._schema[type].oneToMany, function(relatedType, relatedAttr) {
+    var related = object[relatedAttr];
+    // check if obj has a `relatedAttr` that is defined as a relation
+    if (related) {
+      // check if attr value is an array,
+      // if it's not empty, and if the content is an object and not a string
+      if (_.isArray(related) && related.length) {
+        related = _.map(related, (function(item){
+          if (_.isObject(item)) {
+            return item[this._config.idAttribute];
+          }
+          return item;
+        }).bind(this));
+      }
+    }
+  }.bind(this));
+
+  // handle foreignKey relations
+  _.each(this._schema[type].foreignKey, function(relatedType, relatedAttr) {
+    var related = object[relatedAttr];
+    // check if obj has a `relatedAttr` that is defined as a relation
+    if (related) {
+      // check if `obj[relatedAttr]` value is an object (FK should not be arrays),
+      // if it's not empty, and if the content is an object and not a string
+      if (_.isArray(related)) {
+        object[relatedAttr] = _.first(_.map(related, (function(item){
+          if (_.isObject(item)) {
+            return item[this._config.idAttribute];
+          }
+          return item;
+        }).bind(this)));
+        return;
+      }
+      if (_.isObject(related)) {
+        // and replace the list of objects within `item`
+        // by a list of `id's
+        object[relatedAttr] = related[this._config.idAttribute];
+      }
+    }
+  }.bind(this));
+
+  return object;
+};
 
 // ------------------------------
 // Public data sync methods
@@ -367,7 +446,7 @@ Amygdala.prototype.add = function(type, object, options) {
   options = options || {};
   _.defaults(options, {'url': this._getURI(type)});
 
-  return this._post(options.url, object)
+  return this._post(options.url, this._reduceRelated(type, object))
     .then(_.partial(this._setAjax, type).bind(this));
 };
 
@@ -400,7 +479,8 @@ Amygdala.prototype.update = function(type, object) {
     throw new Error('Missing required object.url or ' + this._config.idAttribute + ' attribute.');
   }
 
-  return this._put(url, object)
+
+  return this._put(url, this._reduceRelated(type, object))
     .then(_.partial(this._setAjax, type).bind(this));
 };
 
@@ -414,7 +494,7 @@ Amygdala.prototype._delete = function(url, data) {
   };
 
   return this.ajax('DELETE', this._validateURI(url), settings);
-}
+};
 
 Amygdala.prototype.remove = function(type, object) {
   // DELETE request for `object` in `type`
@@ -509,13 +589,20 @@ Amygdala.prototype.find = function(type, query) {
   if (query === undefined) {
     // query is empty, no object is returned
     return  undefined;
-  } else if (Object.prototype.toString.call(query) === '[object Object]') {
+  }
+
+  if (_.isObject(query) && !_.isArray(query)) {
     // if query is an object, return the first match for the query
     return _.findWhere(store, query);
-  } else if (Object.prototype.toString.call(query) === '[object String]') {
+  }
+
+  if (_.isString(query) || _.isNumber(query)) {
     // if query is a String, assume it stores the key/url value
     return store[query];
   }
+
+  throw new Error('query must be string, number or object');
+
 };
 
 // expose via CommonJS, AMD or as a global object
