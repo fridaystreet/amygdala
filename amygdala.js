@@ -188,6 +188,18 @@ Amygdala.prototype._set = function(type, response, options) {
     }
   }
 
+    //if the response length is 0 reset the store
+  if (!response.length) {
+    //if the previous store is not empty then empty it and fire a change event 
+    if (_.size(store) === 0) {
+      this._store[type] = {};
+      if (!options || options.silent !== true) {
+        this._emitChange(type);
+      }
+    }
+    return;
+  }  
+  
   _.each(response, function(obj) {
     // store the object under this._store['type']['id']
     store[obj[this._config.idAttribute]] = obj;
