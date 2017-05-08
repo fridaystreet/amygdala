@@ -305,6 +305,23 @@ Amygdala.prototype._set = function(type, response, options) {
 
     }.bind(this), schema, obj);
 
+    obj.update = _.partial(function(store, type, data) {
+
+      if (data) {
+        _.forEach(data, (function(value, prop) {
+          this[prop] = value;
+        }).bind(this));
+      }
+
+      return store.update(type, this)
+      .then((function(response){
+        _.forEach(response, (function(value, attr){
+          this[attr] = value;
+        }).bind(this));
+        return response;
+      }).bind(this));
+    }, this, type);
+
     // emit change events
     if (!options || options.silent !== true) {
       this._emitChange(type);
