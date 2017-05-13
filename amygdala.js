@@ -224,6 +224,11 @@ Amygdala.prototype._set = function(type, response, options) {
     }
   }
 
+    //TODO need to handle if response is for entire store of single item
+  //shouldn't delete store for single item
+  //maybe check if there was a query with request. if no query then
+  //server side store is empty
+  
     //if the response length is 0 reset the store
   if (!response.length) {
     //if the previous store is not empty then empty it and fire a change event
