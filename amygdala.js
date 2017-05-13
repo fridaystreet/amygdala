@@ -322,6 +322,33 @@ Amygdala.prototype._set = function(type, response, options) {
       }).bind(this));
     }, this, type);
 
+    obj.save = _.partial(function(type, object, options) {
+      // POST/PUT request for `object` in `type`
+      //
+      // type: schema key/store (teams, users)
+      // object: object to update local and remote
+      // options: extra options
+      // -  url: url override
+
+      // Default to the URI for 'type'
+      options = options || {};
+      _.defaults(options, {'url': this._getURI(type)});
+
+      var url = object.url;
+
+      if (!url && this._config.idAttribute in object) {
+        url = this._getURI(type, object);
+      }
+
+      if (!url) {
+        return this._post(options.url, this._reduceRelated(type, object))
+          .then(_.partial(this._setAjax, type).bind(this));
+      }
+
+      return obj.update(object);
+
+    }, type, obj).bind(this);
+
     // emit change events
     if (!options || options.silent !== true) {
       this._emitChange(type);
@@ -462,9 +489,11 @@ Amygdala.prototype.add = function(type, object, options) {
   // Default to the URI for 'type'
   options = options || {};
   _.defaults(options, {'url': this._getURI(type)});
-
-  return this._post(options.url, this._reduceRelated(type, object))
-    .then(_.partial(this._setAjax, type).bind(this));
+  if (options.save) {
+    return this._post(options.url, this._reduceRelated(type, object))
+      .then(_.partial(this._setAjax, type).bind(this));
+  }
+  return this._set(type, object, options);
 };
 
 Amygdala.prototype._put = function(url, data) {
