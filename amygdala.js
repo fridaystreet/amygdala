@@ -18,15 +18,31 @@ var Amygdala = function(options) {
   this._schema = options.schema;
   this._headers = this._config.headers;
 
+  if (!this._config.storeId) {
+    this._config.storeId = 'base';
+  }
   // memory data storage
+  this._stores = {};
   this._store = {};
   this._changeEvents = {};
+  this._fetchedTypes = {};
+
+  this.setLocalStorage(true);
+};
+
+Amygdala.prototype = _.clone(EventEmitter.prototype);
+
+// ------------------------------
+// Helper methods
+// ------------------------------
+
+Amygdala.prototype.setLocalStorage = function setLocalStorage(silent) {
 
   if (this._config.localStorage) {
     _.each(this._schema, function(value, key) {
       // check each schema entry for localStorage data
       // TODO: filter out apiUrl and idAttribute
-      var storageCache = window.localStorage.getItem('amy-' + key);
+      var storageCache = window.localStorage.getItem('store-' + this._config.storeId + '-' + key);
       if (storageCache) {
         this._set(key, JSON.parse(storageCache), {'silent': true} );
       }
@@ -40,11 +56,31 @@ var Amygdala = function(options) {
   }
 };
 
-Amygdala.prototype = _.clone(EventEmitter.prototype);
+Amygdala.prototype.setStoreId = function setStoreId(id) {
 
-// ------------------------------
-// Helper methods
-// ------------------------------
+  if (id === 'base') {
+    throw new Error("store id base is an internal name and can't be used");
+  }
+
+  if (this._config.storeId === id) {
+    return;
+  }
+
+  var oldStore = _.cloneDeep(this._store);
+  this._stores[this._config.storeId] = oldStore;
+  this._store = _.cloneDeep(this._stores[id]) || {};
+  this._config.storeId = id;
+
+  this.setLocalStorage();
+  _.each(this._schema, (function(value, type) {
+    if (value.segment && this._fetchedTypes[type]) {
+      this.get(type);
+      return;
+    }
+    this._store[type] = _.cloneDeep(oldStore[type]);
+  }).bind(this));
+};
+
 Amygdala.prototype.serialize = function serialize(obj) {
   // Translates an object to a querystring
 
@@ -322,7 +358,7 @@ Amygdala.prototype._set = function(type, response, options) {
       }).bind(this));
     }, this, type);
 
-    obj.save = _.partial(function(type, object, options) {
+    obj.save = _.partial(function(store, type, options) {
       // POST/PUT request for `object` in `type`
       //
       // type: schema key/store (teams, users)
@@ -332,29 +368,29 @@ Amygdala.prototype._set = function(type, response, options) {
 
       // Default to the URI for 'type'
       options = options || {};
-      _.defaults(options, {'url': this._getURI(type)});
+      _.defaults(options, {'url': store._getURI(type)});
 
-      var url = object.url;
+      var url = this.url;
 
-      if (!url && this._config.idAttribute in object) {
-        url = this._getURI(type, object);
+      if (!url && store._config.idAttribute in this) {
+        url = store._getURI(type, this);
       }
 
       if (!url) {
-        return this._post(options.url, this._reduceRelated(type, object))
-          .then(_.partial(this._setAjax, type).bind(this));
+        return store._post(options.url, store._reduceRelated(type, this))
+          .then(_.partial(store._setAjax, type).bind(store));
       }
 
-      return obj.update(object);
+      return this.update();
 
-    }, type, obj).bind(this);
-
-    // emit change events
-    if (!options || options.silent !== true) {
-      this._emitChange(type);
-    }
+    }, this, type, obj);
 
   }.bind(this));
+
+  // emit change events
+  if (!options || options.silent !== true) {
+    this._emitChange(type);
+  }
 
   // return our data as the original api call's response
   return response.length === 1 ? response[0] : response;
@@ -457,6 +493,13 @@ Amygdala.prototype.get = function(type, params, options) {
   // - url: url override
 
   // Default to the URI for 'type'
+  if (!params && !options) {
+    this._fetchedTypes[type] = true;
+  }
+
+  if (this._schema[type].segment && this._config.storeId === 'base') {
+    return Q([]);
+  }
   options = options || {};
   _.defaults(options, {'url': this._getURI(type, params)});
 
@@ -571,7 +614,7 @@ Amygdala.prototype.setCache = function(type, objects) {
   if (!this._schema[type]) {
     throw new Error('Invalid type. Acceptable types are: ' + Object.keys(this._schema));
   }
-  return window.localStorage.setItem('amy-' + type, JSON.stringify(objects));
+  return window.localStorage.setItem('store-' + this._config.storeId + '-' + type, JSON.stringify(objects));
 };
 
 Amygdala.prototype.getCache = function(type) {
@@ -581,7 +624,7 @@ Amygdala.prototype.getCache = function(type) {
   if (!this._schema[type] || !this._schema[type].url) {
     throw new Error('Invalid type. Acceptable types are: ' + Object.keys(this._schema));
   }
-  return JSON.parse(window.localStorage.getItem('amy-' + type));
+  return JSON.parse(window.localStorage.getItem('store-' + this._config.storeId + '-' + type));
 };
 
 // ------------------------------
