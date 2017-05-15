@@ -36,6 +36,19 @@ Amygdala.prototype = _.clone(EventEmitter.prototype);
 // Helper methods
 // ------------------------------
 
+Amygdala.prototype._getHeaders = function getHeaders() {
+
+  var headers = {};
+  _.forEach(this._headers, function(value, header){
+    if (_.isFunction(value)) {
+      headers[header] = value();
+      return;
+    }
+    headers[header] = value;
+  });
+  return headers;
+};
+
 Amygdala.prototype.setLocalStorage = function setLocalStorage(silent) {
 
   if (this._config.localStorage) {
@@ -121,8 +134,27 @@ Amygdala.prototype.ajax = function ajax(method, url, options) {
   request.open(method, url, true);
 
   request.onload = function() {
+
+
     // status 200 OK, 201 CREATED, 20* ALL OK
     if (request.status.toString().substr(0, 2) === '20') {
+
+      if (_.isString(request.response)) {
+        // If the response is a string, try JSON.parse.
+        var resp;
+        try {
+          resp = JSON.parse(request.response);
+        } catch(e) {
+          throw('Invalid JSON from the API response.');
+        }
+        if (_.isObject(resp)) {
+          if (resp.errorMessage) {
+            console.log(resp);
+            deferred.reject(new Error('Request returned an unknown error: ' + resp.errorMessage));
+            return;
+          }
+        }
+      }
       deferred.resolve(request);
     } else {
       deferred.reject(new Error('Request failed with status code ' + request.status));
@@ -163,7 +195,7 @@ Amygdala.prototype._getURI = function(type, params) {
   // exists as a key in `params` append it's value to the url,
   // and remove it from `params` so it's not sent in the query string.
   if (params && this._config.idAttribute in params) {
-    url += params[this._config.idAttribute];
+    url += '/' + params[this._config.idAttribute];
     delete params[this._config.idAttribute];
   }
 
@@ -209,8 +241,13 @@ Amygdala.prototype._set = function(type, response, options) {
     }
   }
 
+  if (response[type] || response[_.startCase(type)]) {
+    response = response[type] || response[_.startCase(type)];
+  }
+
   if (!_.isArray(response)) {
     // The response isn't an array. We need to figure out how to handle it.
+
     if (schema.parse) {
       // Prefer the schema's parse method if one exists.
       response = schema.parse(response);
@@ -224,11 +261,12 @@ Amygdala.prototype._set = function(type, response, options) {
     }
   }
 
-    //TODO need to handle if response is for entire store of single item
+
+  //TODO need to handle if response is for entire store of single item
   //shouldn't delete store for single item
   //maybe check if there was a query with request. if no query then
   //server side store is empty
-  
+
     //if the response length is 0 reset the store
   if (!response.length) {
     //if the previous store is not empty then empty it and fire a change event
@@ -293,7 +331,7 @@ Amygdala.prototype._set = function(type, response, options) {
       obj = _.cloneDeep(obj);
       var promises = [];
 
-      _.each(_.merge(schema.oneToMany, schema.foreignKey), (function(serverAttr, localAttr){
+      _.each(_.merge(_.cloneDeep(schema.oneToMany), _.cloneDeep(schema.foreignKey)), (function(serverAttr, localAttr){
         if (!attributeName || (attributeName && attributeName === localAttr)) {
 
           if (!obj[localAttr]) {
@@ -381,14 +419,33 @@ Amygdala.prototype._set = function(type, response, options) {
         url = store._getURI(type, this);
       }
 
+      var data = store._reduceRelated(type, _.cloneDeep(this));
       if (!url) {
-        return store._post(options.url, store._reduceRelated(type, this))
-          .then(_.partial(store._setAjax, type).bind(store));
+        if (store._config.entityRoot) {
+          data = {
+            [_.startCase(type)]: data
+          };
+        }
+
+        return store._post(options.url, data)
+        .then((function(response){
+          if (!response) {
+            throw new Error('Save failed, invalid response from server');
+          }
+
+          if (store._config.entityRoot) {
+            response = response[_.startCase(type)];
+          }
+
+          _.forEach(response, (function(value, field){
+            this[field] = value;
+          }).bind(this));
+        }).bind(this));
       }
 
       return this.update();
 
-    }, this, type, obj);
+    }, this, type);
 
   }.bind(this));
 
@@ -402,6 +459,7 @@ Amygdala.prototype._set = function(type, response, options) {
 };
 
 Amygdala.prototype._setAjax = function(type, request, options) {
+
   return this._set(type, request.response, options);
 }
 
@@ -483,7 +541,7 @@ Amygdala.prototype._get = function(url, params) {
   // Request settings
   var settings = {
     'data': params,
-    'headers': this._headers
+    'headers': this._getHeaders()
   };
 
   return this.ajax('GET', this._validateURI(url), settings);
@@ -502,9 +560,17 @@ Amygdala.prototype.get = function(type, params, options) {
     this._fetchedTypes[type] = true;
   }
 
+
   if (this._schema[type].segment && this._config.storeId === 'base') {
     return Q([]);
   }
+
+  if (this._schema[type].scope) {
+    params = params || {};
+    params.scopeType = this._schema[type].scope;
+    params.scopeId = GlobalQueryParams[this._schema[type].scope]
+  }
+
   options = options || {};
   _.defaults(options, {'url': this._getURI(type, params)});
 
@@ -520,7 +586,7 @@ Amygdala.prototype._post = function(url, data) {
   var settings = {
     'data': data ? JSON.stringify(data) : null,
     'contentType': 'application/json',
-    'headers': this._headers
+    'headers': this._getHeaders()
   };
 
   return this.ajax('POST', this._validateURI(url), settings);
@@ -537,8 +603,15 @@ Amygdala.prototype.add = function(type, object, options) {
   // Default to the URI for 'type'
   options = options || {};
   _.defaults(options, {'url': this._getURI(type)});
+
+  object = this._reduceRelated(type, object);
+  if (this._config.entityRoot) {
+    object = {
+      [_.startCase(type)]: object
+    };
+  }
   if (options.save) {
-    return this._post(options.url, this._reduceRelated(type, object))
+    return this._post(options.url, object)
       .then(_.partial(this._setAjax, type).bind(this));
   }
   return this._set(type, object, options);
@@ -552,7 +625,7 @@ Amygdala.prototype._put = function(url, data) {
   var settings = {
     'data': JSON.stringify(data),
     'contentType': 'application/json',
-    'headers': this._headers
+    'headers': this._getHeaders()
   };
 
   return this.ajax('PUT', this._validateURI(url), settings);
@@ -564,6 +637,13 @@ Amygdala.prototype.update = function(type, object) {
   // type: schema key/store (teams, users)
   // object: object to update local and remote
   var url = object.url;
+
+  object = this._reduceRelated(type, object);
+  if (this._config.entityRoot) {
+    object = {
+      [_.startCase(type)]: object
+    };
+  }
 
   if (!url && this._config.idAttribute in object) {
     url = this._getURI(type, object);
@@ -584,7 +664,7 @@ Amygdala.prototype._delete = function(url, data) {
   var settings = {
     'data': JSON.stringify(data),
     'contentType': 'application/json',
-    'headers': this._headers
+    'headers': this._getHeaders()
   };
 
   return this.ajax('DELETE', this._validateURI(url), settings);
@@ -596,6 +676,13 @@ Amygdala.prototype.remove = function(type, object) {
   // type: schema key/store (teams, users)
   // object: object to update local and remote
   var url = object.url;
+
+  if (this._config.entityRoot) {
+    object = {
+      [_.startCase(type)]: object
+    };
+  }
+
 
   if (!url && this._config.idAttribute in object) {
     url = this._getURI(type, object);
@@ -709,3 +796,4 @@ if (typeof module === 'object' && module.exports) {
 } else {
   window.Amygdala = Amygdala;
 }
+
