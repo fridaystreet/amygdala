@@ -290,7 +290,7 @@ Amygdala.prototype._set = function(type, response, options) {
 
   _.each(response, function(obj) {
     // store the object under this._store['type']['id']
-    store[obj[this._config.idAttribute]] = obj;
+    store[obj[this._config.idAttribute] || obj.localCreateTime] = obj;
 
     // handle oneToMany relations
     _.each(this._schema[type].oneToMany, function(relatedType, relatedAttr) {
@@ -394,6 +394,10 @@ Amygdala.prototype._set = function(type, response, options) {
     }.bind(this), schema, obj);
 
     obj.update = _.partial(function(store, type, data) {
+
+      if (!this[store._config.idAttribute]) {
+        return;
+      }
 
       if (data) {
         _.forEach(data, (function(value, prop) {
@@ -500,7 +504,8 @@ Amygdala.prototype._remove = function(type, object) {
   this._emitChange(type);
 
   // delete object of type by id
-  delete this._store[type][object[this._config.idAttribute]]
+  delete this._store[type][object[this._config.idAttribute] || object.localCreateTime];
+  return true;
 };
 
 Amygdala.prototype._validateURI = function(url) {
@@ -644,6 +649,8 @@ Amygdala.prototype.add = function(type, object, options) {
     return this._post(options.url, object)
       .then(_.partial(this._setAjax, type).bind(this));
   }
+
+  object.localCreateTime = (new Date()).getTime();
   return this._set(type, object, options);
 };
 
@@ -675,7 +682,7 @@ Amygdala.prototype.update = function(type, object) {
   }
 
   if (!url) {
-    throw new Error('Missing required object.url or ' + this._config.idAttribute + ' attribute.');
+    return Q.reject(new Error('Missing required object.url or ' + this._config.idAttribute + ' attribute.'));
   }
 
   if (this._config.entityRoot) {
@@ -712,7 +719,13 @@ Amygdala.prototype.remove = function(type, object) {
   }
 
   if (!url) {
-    throw new Error('Missing required object.url or ' + this._config.idAttribute + ' attribute.');
+    if (object.localCreateTime) {
+      return Q()
+      .then((function(){
+        return this._remove(type, object);
+      }).bind(this));
+    }
+    return Q.reject(new Error('Missing required object.url or ' + this._config.idAttribute + ' attribute.'));
   }
 
   if (this._config.entityRoot) {
