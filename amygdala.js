@@ -448,9 +448,18 @@ Amygdala.prototype._set = function(type, response, options) {
         }
 
         return store._post(options.url, data)
-        .then((function(response){
-          if (!response) {
+        .then((function(request){
+          if (!request.response) {
             throw new Error('Save failed, invalid response from server');
+          }
+          var response;
+          if (_.isString(request.response)) {
+            // If the response is a string, try JSON.parse.
+            try {
+              response = JSON.parse(request.response);
+            } catch(e) {
+              throw new Error('Invalid JSON from the API response.');
+            }
           }
 
           if (store._config.entityRoot) {
@@ -460,6 +469,7 @@ Amygdala.prototype._set = function(type, response, options) {
           _.forEach(response, (function(value, field){
             this[field] = value;
           }).bind(this));
+          this._emitChange(type);
         }).bind(this));
       }
 
@@ -834,4 +844,3 @@ if (typeof module === 'object' && module.exports) {
 } else {
   window.Amygdala = Amygdala;
 }
-
