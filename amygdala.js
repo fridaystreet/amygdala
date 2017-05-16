@@ -145,7 +145,7 @@ Amygdala.prototype.ajax = function ajax(method, url, options) {
         try {
           resp = JSON.parse(request.response);
         } catch(e) {
-          throw('Invalid JSON from the API response.');
+          deferred.reject(new Error('Invalid JSON from the API response.'));
         }
         if (_.isObject(resp)) {
           if (resp.errorMessage) {
@@ -268,15 +268,24 @@ Amygdala.prototype._set = function(type, response, options) {
   //server side store is empty
 
     //if the response length is 0 reset the store
-  if (!response.length) {
-    //if the previous store is not empty then empty it and fire a change event
-    if (_.size(store) !== 0) {
-      this._store[type] = {};
-      if (!options || options.silent !== true) {
-        this._emitChange(type);
+  // if (!response.length) {
+  //   //if the previous store is not empty then empty it and fire a change event
+  //   if (_.size(store) !== 0) {
+  //     this._store[type] = {};
+  //     if (!options || options.silent !== true) {
+  //       this._emitChange(type);
+  //     }
+  //   }
+  //   return;
+  // }
+
+  var responseIds = _.map(response, this._config.idAttribute);
+  if (options.noQuery) {
+    _.forEach(store, (function(obj){
+      if (obj[this._config.idAttribute] && responseIds.indexOf(obj[this._config.idAttribute]) === -1) {
+        delete store[obj[this._config.idAttribute]];
       }
-    }
-    return;
+    }).bind(this));
   }
 
   _.each(response, function(obj) {
@@ -394,11 +403,18 @@ Amygdala.prototype._set = function(type, response, options) {
 
       return store.update(type, this)
       .then((function(response){
+        if (!response[store._config.idAttribute]) {
+          return;
+        }
         _.forEach(response, (function(value, attr){
           this[attr] = value;
         }).bind(this));
         return response;
       }).bind(this));
+    }, this, type);
+
+    obj.delete = _.partial(function(store, type, data) {
+      return store.remove(type, this);
     }, this, type);
 
     obj.save = _.partial(function(store, type, options) {
@@ -460,6 +476,18 @@ Amygdala.prototype._set = function(type, response, options) {
 
 Amygdala.prototype._setAjax = function(type, request, options) {
 
+  var baseUrl = this._getURI(type);
+
+  if (this._schema[type].scope) {
+    baseUrl += '?scopeType=' + this._schema[type].scope;
+    baseUrl += '&scopeId=' + GlobalQueryParams[this._schema[type].scope];
+  }
+
+  if (request.responseURL === baseUrl) {
+    options = {
+      noQuery: true
+    };
+  }
   return this._set(type, request.response, options);
 }
 
