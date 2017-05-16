@@ -469,7 +469,7 @@ Amygdala.prototype._set = function(type, response, options) {
           _.forEach(response, (function(value, field){
             this[field] = value;
           }).bind(this));
-          this._emitChange(type);
+          store._emitChange(type);
         }).bind(this));
       }
 
