@@ -605,11 +605,13 @@ Amygdala.prototype.add = function(type, object, options) {
   _.defaults(options, {'url': this._getURI(type)});
 
   object = this._reduceRelated(type, object);
+
   if (this._config.entityRoot) {
     object = {
       [_.startCase(type)]: object
     };
   }
+
   if (options.save) {
     return this._post(options.url, object)
       .then(_.partial(this._setAjax, type).bind(this));
@@ -639,11 +641,6 @@ Amygdala.prototype.update = function(type, object) {
   var url = object.url;
 
   object = this._reduceRelated(type, object);
-  if (this._config.entityRoot) {
-    object = {
-      [_.startCase(type)]: object
-    };
-  }
 
   if (!url && this._config.idAttribute in object) {
     url = this._getURI(type, object);
@@ -653,6 +650,11 @@ Amygdala.prototype.update = function(type, object) {
     throw new Error('Missing required object.url or ' + this._config.idAttribute + ' attribute.');
   }
 
+  if (this._config.entityRoot) {
+    object = {
+      [_.startCase(type)]: object
+    };
+  }
 
   return this._put(url, this._reduceRelated(type, object))
     .then(_.partial(this._setAjax, type).bind(this));
@@ -677,19 +679,18 @@ Amygdala.prototype.remove = function(type, object) {
   // object: object to update local and remote
   var url = object.url;
 
-  if (this._config.entityRoot) {
-    object = {
-      [_.startCase(type)]: object
-    };
-  }
-
-
   if (!url && this._config.idAttribute in object) {
     url = this._getURI(type, object);
   }
 
   if (!url) {
     throw new Error('Missing required object.url or ' + this._config.idAttribute + ' attribute.');
+  }
+
+  if (this._config.entityRoot) {
+    object = {
+      [_.startCase(type)]: object
+    };
   }
 
   return this._delete(url, object)
@@ -796,4 +797,3 @@ if (typeof module === 'object' && module.exports) {
 } else {
   window.Amygdala = Amygdala;
 }
-
