@@ -728,12 +728,6 @@ Amygdala.prototype.remove = function(type, object) {
     return Q.reject(new Error('Missing required object.url or ' + this._config.idAttribute + ' attribute.'));
   }
 
-  if (this._config.entityRoot) {
-    object = {
-      [_.startCase(type)]: object
-    };
-  }
-
   return this._delete(url, object)
     .then(_.partial(this._remove, type, object).bind(this));
 };
