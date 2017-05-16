@@ -501,10 +501,9 @@ Amygdala.prototype._remove = function(type, object) {
   // type: schema key/store (teams, users)
   // response: response to store in local cache
 
-  this._emitChange(type);
-
   // delete object of type by id
   delete this._store[type][object[this._config.idAttribute] || object.localCreateTime];
+  this._emitChange(type);
   return true;
 };
 
