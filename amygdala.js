@@ -715,7 +715,9 @@ Amygdala.prototype.remove = function(type, object) {
   var url = object.url;
 
   if (!url && this._config.idAttribute in object) {
+    var id = object[this._config.idAttribute];
     url = this._getURI(type, object);
+    object[this._config.idAttribute] = id;
   }
 
   if (!url) {
@@ -832,3 +834,4 @@ if (typeof module === 'object' && module.exports) {
 } else {
   window.Amygdala = Amygdala;
 }
+
