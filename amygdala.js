@@ -638,13 +638,14 @@ Amygdala.prototype.add = function(type, object, options) {
 
   object = this._reduceRelated(type, object);
 
-  if (this._config.entityRoot) {
-    object = {
-      [_.startCase(type)]: object
-    };
-  }
 
   if (options.save) {
+    if (this._config.entityRoot) {
+      object = {
+        [_.startCase(type)]: object
+      };
+    }
+
     return this._post(options.url, object)
       .then(_.partial(this._setAjax, type).bind(this));
   }
