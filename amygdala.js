@@ -123,7 +123,19 @@ Amygdala.prototype.ajax = function ajax(method, url, options) {
   var query;
   options = options || {};
 
+  if (url === '__LOCAL__') {
+    if (method === 'GET') {
+      if (!_.isEmpty(options.data) && options.data.localCreateTime) {
+        return Q(this.find(options.type, options.data));
+      }
+      return Q(this.findAll(options.type, options.data));
+    }
+    return Q(options.data);
+  }
+
   if (!_.isEmpty(options.data) && method === 'GET') {
+    var opts = _.cloneDeep(options.data);
+    delete opts[this._config.idAttribute];
     query = this.serialize(options.data);
     url = url + '?' + query;
   }
@@ -190,13 +202,18 @@ Amygdala.prototype._getURI = function(type, params) {
     throw new Error('Invalid type. Acceptable types are: ' + Object.keys(this._schema));
   }
   url = this._config.apiUrl + this._schema[type].url;
-
   // if the `idAttribute` specified by the config
   // exists as a key in `params` append it's value to the url,
   // and remove it from `params` so it's not sent in the query string.
   if (params && this._config.idAttribute in params) {
     url += '/' + params[this._config.idAttribute];
-    delete params[this._config.idAttribute];
+    //delete params[this._config.idAttribute];
+  }
+
+  if (this._schema[type].localDataOnly) {
+    url = '__LOCAL__';
+    params = params || {};
+    params.type = type;
   }
 
   return url;
@@ -229,6 +246,8 @@ Amygdala.prototype._set = function(type, response, options) {
 
   // initialize store for this type (if needed)
   // and store it under `store` for easy access.
+
+  options = options || {};
   var store = this._store[type] ? this._store[type] : this._store[type] = {};
   var schema = this._schema[type];
 
@@ -395,10 +414,6 @@ Amygdala.prototype._set = function(type, response, options) {
 
     obj.update = _.partial(function(store, type, data) {
 
-      if (!this[store._config.idAttribute]) {
-        return;
-      }
-
       if (data) {
         _.forEach(data, (function(value, prop) {
           this[prop] = value;
@@ -407,9 +422,6 @@ Amygdala.prototype._set = function(type, response, options) {
 
       return store.update(type, this)
       .then((function(response){
-        if (!response[store._config.idAttribute]) {
-          return;
-        }
         _.forEach(response, (function(value, attr){
           this[attr] = value;
         }).bind(this));
@@ -470,9 +482,12 @@ Amygdala.prototype._set = function(type, response, options) {
             this[field] = value;
           }).bind(this));
           store._emitChange(type);
+          return this;
         }).bind(this));
       }
-
+      if (options.noUpdate) {
+        return Q(this);
+      }
       return this.update();
 
     }, this, type);
@@ -642,6 +657,9 @@ Amygdala.prototype.add = function(type, object, options) {
   // options: extra options
   // -  url: url override
 
+  object = _.cloneDeep(object);
+
+
   // Default to the URI for 'type'
   options = options || {};
   _.defaults(options, {'url': this._getURI(type)});
@@ -660,8 +678,8 @@ Amygdala.prototype.add = function(type, object, options) {
       .then(_.partial(this._setAjax, type).bind(this));
   }
 
-  object.localCreateTime = (new Date()).getTime();
-  return this._set(type, object, options);
+  object.localCreateTime = _.uniqueId((new Date()).getTime());
+  return Q(this._set(type, object, options));
 };
 
 Amygdala.prototype._put = function(url, data) {
@@ -683,6 +701,9 @@ Amygdala.prototype.update = function(type, object) {
   //
   // type: schema key/store (teams, users)
   // object: object to update local and remote
+
+  object = _.cloneDeep(object);
+
   var url = object.url;
 
   object = this._reduceRelated(type, object);
@@ -692,6 +713,9 @@ Amygdala.prototype.update = function(type, object) {
   }
 
   if (!url) {
+    if (object.localCreateTime) {
+      return Q(this._set(type, object));
+    }
     return Q.reject(new Error('Missing required object.url or ' + this._config.idAttribute + ' attribute.'));
   }
 
@@ -722,6 +746,10 @@ Amygdala.prototype.remove = function(type, object) {
   //
   // type: schema key/store (teams, users)
   // object: object to update local and remote
+
+  object = _.cloneDeep(object);
+
+
   var url = object.url;
 
   if (!url && this._config.idAttribute in object) {
@@ -784,7 +812,7 @@ Amygdala.prototype.findAll = function(type, query) {
     results = _.map(store, function(item) { return item; });
   } else if (Object.prototype.toString.call(query) === '[object Object]') {
     // if query is an object, assume it specifies filters.
-    results = _.filter(store, function(item) { return _.findWhere([item], query); });
+    results = _.filter(store, function(item) { return _.find([item], query); });
   } else {
     throw new Error('Invalid query for findAll.');
   }
@@ -822,7 +850,7 @@ Amygdala.prototype.find = function(type, query) {
 
   if (_.isObject(query) && !_.isArray(query)) {
     // if query is an object, return the first match for the query
-    return _.findWhere(store, query);
+    return _.find(store, query);
   }
 
   if (_.isString(query) || _.isNumber(query)) {
