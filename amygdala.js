@@ -307,9 +307,23 @@ Amygdala.prototype._set = function(type, response, options) {
     }).bind(this));
   }
 
+  var promises = [];
   _.each(response, function(obj) {
+
     // store the object under this._store['type']['id']
-    store[obj[this._config.idAttribute] || obj.localCreateTime] = obj;
+
+    var oldVersion = store[obj.localCreateTime] || store[obj[this._config.idAttribute]];
+    oldVersion = oldVersion || obj;
+
+    if (obj[this._config.idAttribute]) {
+      if (store[obj.localCreateTime]) {
+        store[obj.localCreateTime] = obj;
+      } else {
+        store[obj[this._config.idAttribute]] = obj;
+      }
+    } else {
+      store[obj.localCreateTime] = obj;
+    }
 
     // handle oneToMany relations
     _.each(this._schema[type].oneToMany, function(relatedType, relatedAttr) {
@@ -340,14 +354,20 @@ Amygdala.prototype._set = function(type, response, options) {
       if (related) {
         // check if `obj[relatedAttr]` value is an object (FK should not be arrays),
         // if it's not empty, and if the content is an object and not a string
-        if (Object.prototype.toString.call(related) === '[object Object]') {
+        if (_.isArray(related)) {
+          related = _.first(related);
+        }
+
+        if (_.isObject(related)) {
           // if related is an object,
           // populate the relation `table` with this data
           this._set(relatedType, [related]);
           // and replace the list of objects within `item`
           // by a list of `id's
           obj[relatedAttr] = related[this._config.idAttribute];
+          return;
         }
+        obj[relatedAttr] = related;
       }
     }.bind(this));
 
@@ -412,7 +432,7 @@ Amygdala.prototype._set = function(type, response, options) {
 
     }.bind(this), schema, obj);
 
-    obj.update = _.partial(function(store, type, data) {
+    obj.update = _.partial(function(store, oldVersion, type, data) {
 
       if (data) {
         _.forEach(data, (function(value, prop) {
@@ -425,15 +445,27 @@ Amygdala.prototype._set = function(type, response, options) {
         _.forEach(response, (function(value, attr){
           this[attr] = value;
         }).bind(this));
+
+        _.forEach(store._model[type].config.validation, (function(field){
+          if (_.isFunction(field.afterUpdate) && _.get(this, field.path) !== _.get(oldVersion, field.path)) {
+            var promise = Q()
+            .then((function(){
+              return field.afterUpdate(store, store._config.idAttribute, this);
+            }).bind(this));
+            promises.push(promise);
+          }
+        }).bind(this));
+
+        store._set(type, this);
         return response;
       }).bind(this));
-    }, this, type);
+    }, this, oldVersion, type);
 
     obj.delete = _.partial(function(store, type, data) {
       return store.remove(type, this);
     }, this, type);
 
-    obj.save = _.partial(function(store, type, options) {
+    obj.save = _.partial(function(store, oldVersion, type, options) {
       // POST/PUT request for `object` in `type`
       //
       // type: schema key/store (teams, users)
@@ -481,7 +513,18 @@ Amygdala.prototype._set = function(type, response, options) {
           _.forEach(response, (function(value, field){
             this[field] = value;
           }).bind(this));
-          store._emitChange(type);
+
+          _.forEach(store._model[type].config.validation, (function(field){
+            if (_.isFunction(field.afterUpdate) && _.get(this, field.path) !== _.get(oldVersion, field.path)) {
+              var promise = Q()
+              .then((function(){
+                return field.afterUpdate(store, store._config.idAttribute, this);
+              }).bind(this));
+              promises.push(promise);
+            }
+          }).bind(this));
+
+          store._set(type, this, options);
           return this;
         }).bind(this));
       }
@@ -490,10 +533,22 @@ Amygdala.prototype._set = function(type, response, options) {
       }
       return this.update();
 
-    }, this, type);
+    }, this, oldVersion, type);
 
   }.bind(this));
 
+  if (promises.length) {
+    return Q.all(promises)
+    .then((function(result){
+      // emit change events
+      if (!options || options.silent !== true) {
+        this._emitChange(type);
+      }
+
+      // return our data as the original api call's response
+      return response.length === 1 ? response[0] : response;
+    }).bind(this));
+  }
   // emit change events
   if (!options || options.silent !== true) {
     this._emitChange(type);
