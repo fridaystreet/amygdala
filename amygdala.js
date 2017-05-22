@@ -421,7 +421,7 @@ Amygdala.prototype._set = function(type, response, options) {
       .then(function(responses){
         _.each(responses, function(item) {
 
-          if (item.attr in schema.oneToMany) {
+          if (_.isObject(schema.oneToMany) && item.attr in schema.oneToMany) {
             obj[item.attr].push(item.value);
             return;
           }
