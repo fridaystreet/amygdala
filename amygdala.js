@@ -148,29 +148,26 @@ Amygdala.prototype.ajax = function ajax(method, url, options) {
   request.onload = function() {
 
 
+    var resp;
+    if (_.isString(request.response)) {
+      // If the response is a string, try JSON.parse.
+      try {
+        resp = JSON.parse(request.response);
+      } catch(e) {
+        return deferred.reject(new Error('Invalid JSON from the API response.'));
+      }
+    }
     // status 200 OK, 201 CREATED, 20* ALL OK
     if (request.status.toString().substr(0, 2) === '20') {
-
-      if (_.isString(request.response)) {
-        // If the response is a string, try JSON.parse.
-        var resp;
-        try {
-          resp = JSON.parse(request.response);
-        } catch(e) {
-          deferred.reject(new Error('Invalid JSON from the API response.'));
+      if (_.isObject(resp)) {
+        if (resp.errorMessage) {
+          console.log(resp);
+          return deferred.reject(new Error('Request returned an unknown error: ' + resp.errorMessage));
         }
-        if (_.isObject(resp)) {
-          if (resp.errorMessage) {
-            console.log(resp);
-            deferred.reject(new Error('Request returned an unknown error: ' + resp.errorMessage));
-            return;
-          }
-        }
+        return deferred.resolve(request);
       }
-      deferred.resolve(request);
-    } else {
-      deferred.reject(new Error('Request failed with status code ' + request.status));
     }
+    return deferred.reject(new Error(resp.errorMessage || 'Request failed with status code ' + request.status));
   };
 
   request.onerror = function() {
@@ -325,51 +322,53 @@ Amygdala.prototype._set = function(type, response, options) {
       store[obj.localCreateTime] = obj;
     }
 
-    // handle oneToMany relations
-    _.each(this._schema[type].oneToMany, function(relatedType, relatedAttr) {
-      var related = obj[relatedAttr];
-      // check if obj has a `relatedAttr` that is defined as a relation
-      if (related) {
-        // check if attr value is an array,
-        // if it's not empty, and if the content is an object and not a string
-        if (Object.prototype.toString.call(related) === '[object Array]' &&
-          related.length > 0 &&
-          Object.prototype.toString.call(related[0]) === '[object Object]') {
-          // if related is a list of objects,
-          // populate the relation `table` with this data
-          this._set(relatedType, related);
-          // and replace the list of objects within `obj`
-          // by a list of `id's
-          obj[relatedAttr] = _.map(related, function(item) {
-            return item[this._config.idAttribute];
-          }.bind(this));
-        }
-      }
-    }.bind(this));
-
-    // handle foreignKey relations
-    _.each(this._schema[type].foreignKey, function(relatedType, relatedAttr) {
-      var related = obj[relatedAttr];
-      // check if obj has a `relatedAttr` that is defined as a relation
-      if (related) {
-        // check if `obj[relatedAttr]` value is an object (FK should not be arrays),
-        // if it's not empty, and if the content is an object and not a string
-        if (_.isArray(related)) {
-          related = _.first(related);
-        }
-
-        if (_.isObject(related)) {
-          // if related is an object,
-          // populate the relation `table` with this data
-          this._set(relatedType, [related]);
-          // and replace the list of objects within `item`
-          // by a list of `id's
-          obj[relatedAttr] = related[this._config.idAttribute];
-          return;
-        }
-        obj[relatedAttr] = related;
-      }
-    }.bind(this));
+    //TODO not sure about this. it's to handle populated related objects coming from server
+    //don't need it right now, but it interferes with updating local items
+    // // handle oneToMany relations
+    // _.each(this._schema[type].oneToMany, function(relatedType, relatedAttr) {
+    //   // var related = obj[relatedAttr];
+    //   // check if obj has a `relatedAttr` that is defined as a relation
+    //   if (obj[relatedAttr]) {
+    //     // check if attr value is an array,
+    //     // if it's not empty, and if the content is an object and not a string
+    //     if (_.isArray(obj[relatedAttr]) && _.isObject(_.first(obj[relatedAttr]))) {
+    //       // if related is a list of objects,
+    //       // populate the relation `table` with this data
+    //       //this._set(relatedType, obj[relatedAttr]);
+    //       // and replace the list of objects within `obj`
+    //       // by a list of `id's.
+    //       //Why do this. it just means we need to do get related on it later
+    //       // obj[relatedAttr] = _.map(related, function(item) {
+    //       //   return item[this._config.idAttribute];
+    //       // }.bind(this));
+    //     }
+    //   }
+    // }.bind(this));
+    //
+    // // handle foreignKey relations
+    // _.each(this._schema[type].foreignKey, function(relatedType, relatedAttr) {
+    //   // var related = obj[relatedAttr];
+    //   // check if obj has a `relatedAttr` that is defined as a relation
+    //   if (obj[relatedAttr]) {
+    //     // check if `obj[relatedAttr]` value is an object (FK should not be arrays),
+    //     // if it's not empty, and if the content is an object and not a string
+    //     if (_.isArray(obj[relatedAttr])) {
+    //       obj[relatedAttr] = _.first(obj[relatedAttr]);
+    //     }
+    //
+    //     if (_.isObject(obj[relatedAttr])) {
+    //       // if related is an object,
+    //       // populate the relation `table` with this data
+    //       //this._set(relatedType, [obj[relatedAttr]]);
+    //       // and replace the list of objects within `item`
+    //       // by a list of `id's
+    //       //again, don't do this it doesn't make sense
+    //       // obj[relatedAttr] = related[this._config.idAttribute];
+    //       return;
+    //     }
+    //     // obj[relatedAttr] = related;
+    //   }
+    // }.bind(this));
 
     // obj.related()
     // set up a related method to fetch other related objects
@@ -440,25 +439,27 @@ Amygdala.prototype._set = function(type, response, options) {
         }).bind(this));
       }
 
-      return store.update(type, this)
-      .then((function(response){
-        _.forEach(response, (function(value, attr){
-          this[attr] = value;
-        }).bind(this));
+      var promises = _.filter(_.map(store._model[type].config.validation, (function(field){
+        if (_.isFunction(field.afterUpdate) && _.get(this, field.path) !== _.get(oldVersion, field.path)) {
+          var promise = Q()
+          .then((function(){
+            return field.afterUpdate(store, store._config.idAttribute, this);
+          }).bind(this));
+          return promis;
+        }
+      }).bind(this)));
 
-        _.forEach(store._model[type].config.validation, (function(field){
-          if (_.isFunction(field.afterUpdate) && _.get(this, field.path) !== _.get(oldVersion, field.path)) {
-            var promise = Q()
-            .then((function(){
-              return field.afterUpdate(store, store._config.idAttribute, this);
-            }).bind(this));
-            promises.push(promise);
-          }
+      if (promises.length) {
+        return Q.all(promises)
+        .then((function(result){
+          // emit change events
+          store._set(type, this);
+          return this;
         }).bind(this));
+      }
 
-        store._set(type, this);
-        return response;
-      }).bind(this));
+      store._set(type, this);
+      return Q(this);
     }, this, oldVersion, type);
 
     obj.delete = _.partial(function(store, type, data) {
@@ -511,18 +512,30 @@ Amygdala.prototype._set = function(type, response, options) {
           }
 
           _.forEach(response, (function(value, field){
-            this[field] = value;
+            if (!this[field] || !_.isArray(value)) {
+              this[field] = value;
+              return;
+            }
           }).bind(this));
 
-          _.forEach(store._model[type].config.validation, (function(field){
+          var promises = _.filter(_.map(store._model[type].config.validation, (function(field){
             if (_.isFunction(field.afterUpdate) && _.get(this, field.path) !== _.get(oldVersion, field.path)) {
               var promise = Q()
               .then((function(){
                 return field.afterUpdate(store, store._config.idAttribute, this);
               }).bind(this));
-              promises.push(promise);
+              return promis;
             }
-          }).bind(this));
+          }).bind(this)));
+
+          if (promises.length) {
+            return Q.all(promises)
+            .then((function(result){
+              // emit change events
+              store._set(type, this, options);
+              return this;
+            }).bind(this));
+          }
 
           store._set(type, this, options);
           return this;
@@ -531,24 +544,11 @@ Amygdala.prototype._set = function(type, response, options) {
       if (options.noUpdate) {
         return Q(this);
       }
-      return this.update();
-
+      return store.update(type, this);
     }, this, oldVersion, type);
 
   }.bind(this));
 
-  if (promises.length) {
-    return Q.all(promises)
-    .then((function(result){
-      // emit change events
-      if (!options || options.silent !== true) {
-        this._emitChange(type);
-      }
-
-      // return our data as the original api call's response
-      return response.length === 1 ? response[0] : response;
-    }).bind(this));
-  }
   // emit change events
   if (!options || options.silent !== true) {
     this._emitChange(type);
