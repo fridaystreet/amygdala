@@ -164,8 +164,8 @@ Amygdala.prototype.ajax = function ajax(method, url, options) {
           console.log(resp);
           return deferred.reject(new Error('Request returned an unknown error: ' + resp.errorMessage));
         }
-        return deferred.resolve(request);
       }
+      return deferred.resolve(request);
     }
     return deferred.reject(new Error(resp.errorMessage || 'Request failed with status code ' + request.status));
   };
@@ -582,7 +582,7 @@ Amygdala.prototype._remove = function(type, object) {
   // response: response to store in local cache
 
   // delete object of type by id
-  delete this._store[type][object[this._config.idAttribute] || object.localCreateTime];
+  delete this._store[type][object.localCreateTime || object[this._config.idAttribute]];
   this._emitChange(type);
   return true;
 };
