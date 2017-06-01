@@ -86,8 +86,12 @@ Amygdala.prototype.setStoreId = function setStoreId(id) {
 
   this.setLocalStorage();
   _.each(this._schema, (function(value, type) {
-    if (value.segment && this._fetchedTypes[type]) {
-      this.get(type);
+    if (value.segment) {
+      if (this._fetchedTypes[type]) {
+        this.get(type);
+        return;
+      }
+      this._store[type] = [];
       return;
     }
     this._store[type] = _.cloneDeep(oldStore[type]);
@@ -582,7 +586,7 @@ Amygdala.prototype._remove = function(type, object) {
   // response: response to store in local cache
 
   // delete object of type by id
-  delete this._store[type][object.localCreateTime || object[this._config.idAttribute]];
+  delete this._store[type][object.localCreateTime ];
   this._emitChange(type);
   return true;
 };
@@ -927,3 +931,4 @@ if (typeof module === 'object' && module.exports) {
 } else {
   window.Amygdala = Amygdala;
 }
+
