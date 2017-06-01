@@ -80,8 +80,9 @@ Amygdala.prototype.setStoreId = function setStoreId(id) {
   }
 
   var oldStore = _.cloneDeep(this._store);
-  this._stores[this._config.storeId] = oldStore;
-  this._store = _.cloneDeep(this._stores[id]) || {};
+  // this._stores[this._config.storeId] = oldStore;
+  this._stores[id] = this._stores[id] || {};
+  this._store = this._stores[id];
   this._config.storeId = id;
 
   this.setLocalStorage();
@@ -91,7 +92,7 @@ Amygdala.prototype.setStoreId = function setStoreId(id) {
         this.get(type);
         return;
       }
-      this._store[type] = [];
+      this._store[type] = {};
       return;
     }
     this._store[type] = _.cloneDeep(oldStore[type]);
@@ -249,8 +250,8 @@ Amygdala.prototype._set = function(type, response, options) {
   // and store it under `store` for easy access.
 
   options = options || {};
-  var store = this._store[type] ? this._store[type] : this._store[type] = {};
   var schema = this._schema[type];
+  var store = this._store[type] ? this._store[type] : this._store[type] = {};
 
   if (_.isString(response)) {
     // If the response is a string, try JSON.parse.
@@ -931,4 +932,5 @@ if (typeof module === 'object' && module.exports) {
 } else {
   window.Amygdala = Amygdala;
 }
+
 
