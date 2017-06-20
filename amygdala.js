@@ -587,7 +587,8 @@ Amygdala.prototype._remove = function(type, object) {
   // response: response to store in local cache
 
   // delete object of type by id
-  delete this._store[type][object.localCreateTime ];
+  delete this._store[type][object.localCreateTime];
+  delete this._store[type][object[this._config.idAttribute]];  
   this._emitChange(type);
   return true;
 };
